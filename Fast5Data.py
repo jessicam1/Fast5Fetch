@@ -1,4 +1,5 @@
 import os
+import csv
 import random
 import numpy as np
 from pathlib import Path
@@ -76,6 +77,11 @@ def data_and_label_generation(file_list, label, window, shuffle=True):
                 x = norm_sample.reshape((norm_sample.shape[0], 1))
                 y = np.array(label)
                 yield (x, y)        
+
+# def data_from_csv_generator(csv_file):
+#     reader = csv.reader(csv_file)
+#     for line in reader:
+#         wholeline = 
 
 # class TrainValSplit:
 #     def __init__(self, file_dirs):
