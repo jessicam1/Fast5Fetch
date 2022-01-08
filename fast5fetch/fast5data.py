@@ -1,3 +1,4 @@
+import time
 import sys
 import random
 import numpy as np
@@ -8,6 +9,8 @@ from scipy import stats
 
 
 def get_all_fast5s(dirs):
+    """ returns all fast5 files in a given directory list, recursively """
+
     fast5s = []
     for d in dirs:
         fast5s += [str(x) for x in Path(d).rglob("*.fast5")]
@@ -49,8 +52,7 @@ def data_generation(file_list, window, shuffle=True):
         sample_file = file_list[i]
         with get_fast5_file(sample_file, mode='r') as f5:
             for read in f5.get_reads():
-                norm_sample = process_fast5_read(read, window)
-                x = norm_sample.reshape((norm_sample.shape[0], 1))
+                x = process_fast5_read(read, window)
                 yield x
 
 
@@ -63,138 +65,50 @@ def data_and_label_generation(file_list, label, window, shuffle=True):
         sample_file = file_list[i]
         with get_fast5_file(sample_file, mode='r') as f5:
             for read in f5.get_reads():
-                norm_sample = process_fast5_read(read, window)
-                x = norm_sample.reshape((norm_sample.shape[0], 1))
+                x = process_fast5_read(read, window)
                 y = np.array(label)
                 yield (x, y)
 
 
-def process_fast5_read(read, window, skip=1000):
-    whole_sample = np.asarray(read.get_raw_data(scale=True))
-    start_col = random.randint(skip, (len(whole_sample)-window))
-    sample = whole_sample[start_col:start_col+window:1]
-    norm_sample = stats.zscore(sample)
-    return norm_sample
+def process_fast5_read(read, window, skip=1000, zscore=True):
+    """ Normalizes and extracts specified region from raw signal """
+
+    s = read.get_raw_data(scale=True)  # Expensive
+
+    if zscore:
+        s = stats.zscore(s)
+
+    pos = random.randint(skip, len(s)-window)
+
+    return s[pos:pos+window].reshape((window, 1))
 
 
-def fast5_generator(fast5, label, window):
+def xy_generator_single(fast5, label, window):
+    """ Generator that yields training examples from one fast5 file  """
+
     with get_fast5_file(fast5, mode='r') as f5:
         for read in f5.get_reads():
-            s = process_fast5_read(read, window)
-            x = s.reshape((s.shape[0], 1))
+            x = process_fast5_read(read, window)
             y = np.array(label)
             yield (x, y)
 
 
-def fast5_read_generator(file_list, shuffle=True):
-    if shuffle:
-        random.shuffle(file_list)
+class xy_generator_many():
+    """ Generator that yields training examples from multiple fast5 files
 
-    for f in file_list:
-        with get_fast5_file(f, mode='r') as f5:
-            for read in f5.get_reads():
-                yield read.reshape((s.shape[0], 1))
-
-
-def fast5_read_to_example(read, label, window):
-    r = process_fast5_read(read, window)
-    x = s.reshape((s.shape[0], 1))
-    y = np.array(label)
-    return (x, y)
-
-
-def get_examples_from_fast5(fast5, label, window):
-    with get_fast5_file(fast5, mode='r') as f5:
-        for read in f5.get_reads():
-            return fast5_read_to_example(read, label, window)
-
-
-def worker(input, output, label, window):
-    """ Processes fast5 files and puts individual reads in queue"""
-
-    for f in iter(input.get, 'STOP'):
-        print(f)
-        with get_fast5_file(f, mode='r') as f5:
-            for read in f5.get_reads():
-                norm_sample = process_fast5_read(read, window)
-                x = norm_sample.reshape((norm_sample.shape[0], 1))
-                y = np.array(label)
-                output.put((x, y))
-    return
-
-
-class parallel_xy_generator():
+    Processing of fast5 files can be parallelized to achieve higher throughput.
+    """
 
     def __init__(self, files, label, window, shuffle=True, par=1):
+        if shuffle:
+            random.shuffle(files)
+
         self.files = files
         self.label = label
         self.window = window
         self.shuffle = shuffle
         self.par = par
-
-        self.pool = mp.Pool(self.par)
-        self.it = self.pool.imap_unordered(self.worker, self.files)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        return next(self.it)
-
-    def worker(self, fast5):
-        """ Processes a fast5 with single read """
-
-        with get_fast5_file(fast5, mode='r') as f5:
-            for read in f5.get_reads():
-                norm_sample = process_fast5_read(read, self.window)
-                x = norm_sample.reshape((norm_sample.shape[0], 1))
-                y = np.array(self.label)
-                return(x, y)
-
-    #  https://stackoverflow.com/questions/25382455/
-    def __getstate__(self):
-        self_dict = self.__dict__.copy()
-        del self_dict['pool']
-        del self_dict['it']
-        return self_dict
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-
-
-class parallel_xy_generator2():
-
-    # def __init__(self, files, label, window, shuffle=True, par=1):
-    #     self.files = files
-    #     self.label = label
-    #     self.window = window
-    #     self.shuffle = shuffle
-    #     self.par = par
-    #
-    #     # Create queues
-    #     self.task_q = Queue()
-    #     self.done_q = Queue()
-    #
-    #     # Submit tasks:
-    #     for f in files:
-    #         self.task_q.put(f)
-    #
-    #     # Start worker processes
-    #     for i in range(par):
-    #         Process(target=worker,
-    #                 args=(self.task_q, self.done_q, label, window)).start()
-    #
-    #     # Tell child processes to stop when all tasks are done
-    #     for i in range(par):
-    #         self.task_q.put('STOP')
-    #
-    def __init__(self, files, label, window, shuffle=True, par=1):
-        self.files = files
-        self.label = label
-        self.window = window
-        self.shuffle = shuffle
-        self.par = par
-        self.done = False
+        self.count = 0  # counts number of reads processed
 
         # Create queue for workers to put results
         m = mp.Manager()
@@ -202,27 +116,35 @@ class parallel_xy_generator2():
 
         # Create a pool of workers and submit jobs
         self.pool = mp.Pool(self.par)
-        self.it = self.pool.imap_unordered(self.worker, self.files)
+        self.async_res = self.pool.map_async(self.worker, self.files,
+                                             chunksize=int(len(files)/(2*par)))
 
+        # Close the pool, as no more jobs will be submitted
         self.pool.close()
-        self.pool.join()
-        self.done = True
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        if self.results.empty() and self.done:
-            raise StopIteration
+        # Logic to terminate iteration when jobs are finished and all results
+        # have been consumed. The empty() and ready() methods used below have
+        # infinitesimally small delays until they return True. Therefore, we
+        # need to check them again after a small delay. Perhaps not the best
+        # solution.
+        if self.results.empty():
+            time.sleep(1)
+            if self.results.empty() and self.async_res.ready():
+                raise StopIteration
+
+        self.count += 1
         return self.results.get()
 
     def worker(self, fast5):
-        """ Processes fast5 files and puts individual reads in queue"""
+        """ Processes a fast5 file and adds training examples in a queue"""
 
         with get_fast5_file(fast5, mode='r') as f5:
             for read in f5.get_reads():
-                norm_sample = process_fast5_read(read, self.window)
-                x = norm_sample.reshape((norm_sample.shape[0], 1))
+                x = process_fast5_read(read, self.window)
                 y = np.array(self.label)
                 self.results.put((x, y))
 
@@ -230,7 +152,7 @@ class parallel_xy_generator2():
     def __getstate__(self):
         self_dict = self.__dict__.copy()
         del self_dict['pool']
-        del self_dict['it']
+        del self_dict['async_res']
         return self_dict
 
     def __setstate__(self, state):
