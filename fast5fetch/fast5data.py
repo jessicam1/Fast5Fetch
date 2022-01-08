@@ -157,3 +157,22 @@ class xy_generator_many():
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+
+
+def skew_generators(files1, files2, label1, label2, window, skew=0.5, par=2):
+    """ Interleaves 2 generators. skew defines proportion of the first
+
+    Not extensively test, especially with respect to StopIteration exceptions.
+    """
+
+    par1 = int(skew * par) + 1
+    par2 = int((1-skew) * par) + 1
+    g1 = xy_generator_many(files1, label1, window, True, par1)
+    g2 = xy_generator_many(files2, label2, window, True, par2)
+
+    # TODO: The code below will probably lead to unexpected StopIteration
+    while True:
+        if random.random() < skew:
+            yield next(g1)
+
+        yield next(g2)
