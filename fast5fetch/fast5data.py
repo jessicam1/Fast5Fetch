@@ -1,157 +1,178 @@
-import os
-import csv
+import time
+import sys
 import random
 import numpy as np
+import multiprocessing as mp
 from pathlib import Path
 from ont_fast5_api.fast5_interface import get_fast5_file
-import tensorflow as tf
-from tensorflow import keras
 from scipy import stats
 
-def lib_file_list(file_dirs):
-    file_list = []
-    read_list = []
-    for directory in file_dirs:
-        path = Path(directory)
-        for afile in path.rglob("*.fast5"):
-            file_list.append(str(afile))
-    random.shuffle(file_list)
-    for i in range(len(file_list)):
-        with get_fast5_file(sample_file, mode='r') as f5:
-            sample_file = file_list[i]
-            for read in f5.get_reads():
-                read_list.append(str(read))
-    return file_list, read_list
 
-def train_test_val_split(file_dirs): #, num_train, num_val):
-    total_list = []
-    train_list = []
-    test_list = []
-    val_list = []
-    for directory in file_dirs:
-        path = Path(directory)
-        for afile in path.rglob("*.fast5"):
-            # total_list.append(str(afile))
-            rand_num = random.random()
-            if rand_num < 0.1:
-                val_list.append(str(afile))
-            if rand_num >= 0.1 and rand_num < 0.2:
-                test_list.append(str(afile))
-            else:
-                train_list.append(str(afile))
-    random.shuffle(train_list)
-    random.shuffle(test_list)
-    random.shuffle(val_list)
-    # random.shuffle(total_list)
-    # train_list = total_list[0 : num_train : 1]
-    # val_list = total_list[num_train+1 : num_train+num_val+1 : 1] 
+def get_all_fast5s(dirs):
+    """ returns all fast5 files in a given directory list, recursively """
+
+    fast5s = []
+    for d in dirs:
+        fast5s += [str(x) for x in Path(d).rglob("*.fast5")]
+
+    return fast5s
+
+
+def train_test_val_split(dirs, val_ratio=0.1, test_ratio=0.1, shuffle=True):
+    elems = get_all_fast5s(dirs)
+
+    if len(elems) < 3:
+        print("error: at least 3 elements are required", file=sys.stderr)
+        return None, None, None
+
+    if shuffle:
+        random.shuffle(elems)
+
+    # Assures that no list is returned empty
+    train_list, test_list, val_list = [elems[0]], [elems[1]], [elems[2]]
+
+    for e in elems[3:]:
+        rand_num = random.random()
+        if rand_num < val_ratio:
+            val_list.append(e)
+        elif rand_num < val_ratio + test_ratio:
+            test_list.append(e)
+        else:
+            train_list.append(e)
+
     return train_list, test_list, val_list
+
 
 def data_generation(file_list, window, shuffle=True):
     # for generating x (data) without labels -- for predicting
-    if shuffle==True:
+    if shuffle:
         random.shuffle(file_list)
+
     for i in range(len(file_list)):
         sample_file = file_list[i]
         with get_fast5_file(sample_file, mode='r') as f5:
             for read in f5.get_reads():
-                whole_sample = np.asarray(read.get_raw_data(scale=True))
-                start_col = random.randint(1000, (len(whole_sample)-window))
-                sample = whole_sample[start_col:start_col+window:1]
-                norm_sample = stats.zscore(sample) # .asarray()
-                x = norm_sample.reshape((norm_sample.shape[0], 1))
-                yield x  
+                x = process_fast5_read(read, window)
+                yield x
+
 
 def data_and_label_generation(file_list, label, window, shuffle=True):
     # for generating x,y (data and labels) -- for training, testing
-    if shuffle==True:
+    if shuffle:
         random.shuffle(file_list)
+
     for i in range(len(file_list)):
         sample_file = file_list[i]
         with get_fast5_file(sample_file, mode='r') as f5:
             for read in f5.get_reads():
-                whole_sample = np.asarray(read.get_raw_data(scale=True))
-                start_col = random.randint(1000, (len(whole_sample)-window))
-                sample = whole_sample[start_col:start_col+window:1]
-                norm_sample = stats.zscore(sample) # .asarray()
-                x = norm_sample.reshape((norm_sample.shape[0], 1))
+                x = process_fast5_read(read, window)
                 y = np.array(label)
-                yield (x, y)        
+                yield (x, y)
 
-# def data_from_csv_generator(csv_file):
-#     reader = csv.reader(csv_file)
-#     for line in reader:
-#         wholeline = 
 
-# class TrainValSplit:
-#     def __init__(self, file_dirs):
-#         self.file_dirs = file_dirs
-#         self.train_val_split() #file_dirs, train_reads, val_reads)
-#
-#     def train_val_split(self):
-#         train_list = []
-#         val_list = []
-#         for directory in self.file_dirs:
-#             path = Path(directory)
-#             for afile in path.rglob("*.fast5"):
-#                 rand_num = random.random()
-#                 if rand_num < 0.1:
-#                     val_list.append(str(afile))
-#                 else:
-#                     train_list.append(str(afile))
-#         random.shuffle(train_list)
-#         random.shuffle(val_list)
-#         return train_list, val_list
-#
-# class SampleGeneratorFromFiles:
-#     def __init__(self, file_list, label, shuffle=True):
-#         self.file_list = file_list
-#         self.label = label
-#         self.shuffle = shuffle
-#
-#     # def __iter__(self):
-#     #     return self
-#
-#     def data_generation(self): #__next__(self): #, file_list, label, numreads, shuffle):
-#         window = 8000
-#         if self.shuffle==True:
-#             random.shuffle(self.file_list)
-#         for i in range(len(self.file_list)):
-#             sample_file = self.file_list[i]
-#             with get_fast5_file(sample_file, mode='r') as f5:
-#                 for read in f5.get_reads():
-#                     whole_sample = np.asarray(read.get_raw_data(scale=True))
-#                     start_col = random.randint(1000, (len(whole_sample)-window))
-#                     sample = whole_sample[start_col:start_col+window:1]
-#                     norm_sample = stats.zscore(sample) # .asarray()
-#                     # sig_output = norm_sample.reshape((sample_array.shape[0], 1))
-#                     # x = tf.convert_to_tensor(sig_output, dtype=tf.float32)
-#                     x = norm_sample.reshape((norm_sample.shape[0], 1))
-#                     # label_output = np.array(self.label)
-#                     # y = tf.convert_to_tensor(label_output, dtype=tf.int16)
-#                     y = np.array(self.label)
-#                     # if i == self.numreads:
-#                     #     break
-#                     yield (x, y)                
-#
-# class BatchGenerator:
-#     """
-#     Spitting out batches of positives and negatives at the proper ratio
-#     """
-#     def __init__(self, pos_files, neg_files, window=8000, batchsize=32, ratio=0.5, shuffle=True):
-#         self.pos_gen = SampleGeneratorFromFiles(pos_files, window, shuffle, 1)
-#         self.neg_gen = SampleGeneratorFromFiles(neg_files, window, shuffle, 0)
-#         self.window = window
-#         self.batchsize = batchsize
-#         self.ratio = ratio
-#
-#     def __next__(self):
-#         batch = []
-#         for i in range(0, self.batchsize):
-#             random_num = random.random()
-#             if random_num < self.ratio:
-#                 batch += [next(self.pos_gen)]
-#             else:
-#                 batch += [next(self.neg_gen)]
-#         yield batch
-#
+def process_fast5_read(read, window, skip=1000, zscore=True):
+    """ Normalizes and extracts specified region from raw signal """
+
+    s = read.get_raw_data(scale=True)  # Expensive
+
+    if zscore:
+        s = stats.zscore(s)
+
+    pos = random.randint(skip, len(s)-window)
+
+    return s[pos:pos+window].reshape((window, 1))
+
+
+def xy_generator_single(fast5, label, window):
+    """ Generator that yields training examples from one fast5 file  """
+
+    with get_fast5_file(fast5, mode='r') as f5:
+        for read in f5.get_reads():
+            x = process_fast5_read(read, window)
+            y = np.array(label)
+            yield (x, y)
+
+
+class xy_generator_many():
+    """ Generator that yields training examples from multiple fast5 files
+
+    Processing of fast5 files can be parallelized to achieve higher throughput.
+    """
+
+    def __init__(self, files, label, window, shuffle=True, par=1):
+        if shuffle:
+            random.shuffle(files)
+
+        self.files = files
+        self.label = label
+        self.window = window
+        self.shuffle = shuffle
+        self.par = par
+        self.count = 0  # counts number of reads processed
+
+        # Create queue for workers to put results
+        m = mp.Manager()
+        self.results = m.Queue()
+
+        # Create a pool of workers and submit jobs
+        self.pool = mp.Pool(self.par)
+        self.async_res = self.pool.map_async(self.worker, self.files,
+                                             chunksize=int(len(files)/(2*par)))
+
+        # Close the pool, as no more jobs will be submitted
+        self.pool.close()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        # Logic to terminate iteration when jobs are finished and all results
+        # have been consumed. The empty() and ready() methods used below have
+        # infinitesimally small delays until they return True. Therefore, we
+        # need to check them again after a small delay. Perhaps not the best
+        # solution.
+        if self.results.empty():
+            time.sleep(1)
+            if self.results.empty() and self.async_res.ready():
+                raise StopIteration
+
+        self.count += 1
+        return self.results.get()
+
+    def worker(self, fast5):
+        """ Processes a fast5 file and adds training examples in a queue"""
+
+        with get_fast5_file(fast5, mode='r') as f5:
+            for read in f5.get_reads():
+                x = process_fast5_read(read, self.window)
+                y = np.array(self.label)
+                self.results.put((x, y))
+
+    #  https://stackoverflow.com/questions/25382455/
+    def __getstate__(self):
+        self_dict = self.__dict__.copy()
+        del self_dict['pool']
+        del self_dict['async_res']
+        return self_dict
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+
+def skew_generators(files1, files2, label1, label2, window, skew=0.5, par=2):
+    """ Interleaves 2 generators. skew defines proportion of the first
+
+    Not extensively test, especially with respect to StopIteration exceptions.
+    """
+
+    par1 = int(skew * par) + 1
+    par2 = int((1-skew) * par) + 1
+    g1 = xy_generator_many(files1, label1, window, True, par1)
+    g2 = xy_generator_many(files2, label2, window, True, par2)
+
+    # TODO: The code below will probably lead to unexpected StopIteration
+    while True:
+        if random.random() < skew:
+            yield next(g1)
+
+        yield next(g2)
