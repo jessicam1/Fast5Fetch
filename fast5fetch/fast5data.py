@@ -99,7 +99,7 @@ class xy_generator_many():
     Processing of fast5 files can be parallelized to achieve higher throughput.
     """
 
-    def __init__(self, files, label, window, shuffle=True, par=1):
+    def __init__(self, files, label, window, shuffle=True, par=1, buff=100):
         if shuffle:
             random.shuffle(files)
 
@@ -112,7 +112,7 @@ class xy_generator_many():
 
         # Create queue for workers to put results
         m = mp.Manager()
-        self.results = m.Queue()
+        self.results = m.Queue(self.buff)
 
         # Create a pool of workers and submit jobs
         self.pool = mp.Pool(self.par)
@@ -146,7 +146,7 @@ class xy_generator_many():
             for read in f5.get_reads():
                 x = process_fast5_read(read, self.window)
                 y = np.array(self.label)
-                self.results.put((x, y))
+                self.results.put((x, y), block=True)
 
     #  https://stackoverflow.com/questions/25382455/
     def __getstate__(self):
