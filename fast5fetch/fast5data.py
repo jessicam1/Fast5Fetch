@@ -93,6 +93,22 @@ def xy_generator_single(fast5, label, window):
             yield (x, y)
 
 
+class xy_generator_many_wrapper():
+
+    def __init__(self, files, label, window, shuffle=True, par=1, buff=None):
+        self.gen = xy_generator_many(
+                files, label, window, shuffle=shuffle, par=par, buff=buff)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self.gen)
+
+    def __del__(self):
+        self.gen.pool.terminate()
+
+
 class xy_generator_many():
     """ Generator that yields training examples from multiple fast5 files
 
@@ -109,6 +125,7 @@ class xy_generator_many():
         self.shuffle = shuffle
         self.par = par
         self.count = 0  # counts number of reads processed
+        self.buff = buff
 
         # Create queue for workers to put results
         m = mp.Manager()
