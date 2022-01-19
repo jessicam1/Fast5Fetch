@@ -95,7 +95,7 @@ def xy_generator_single(fast5, label, window):
 
 class xy_generator_many_wrapper():
 
-    def __init__(self, files, label, window, shuffle=True, par=1, buff=None):
+    def __init__(self, files, label, window, shuffle=True, par=1, buff=100):
         self.gen = xy_generator_many(
                 files, label, window, shuffle=shuffle, par=par, buff=buff)
 
