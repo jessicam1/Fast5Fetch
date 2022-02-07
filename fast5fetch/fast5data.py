@@ -92,6 +92,13 @@ def xy_generator_single(fast5, label, window):
             y = np.array(label)
             yield (x, y)
 
+def x_generator_single(fast5, window):
+    """ Generator that yields training examples from one fast5 file  """
+
+    with get_fast5_file(fast5, mode='r') as f5:
+        for read in f5.get_reads():
+            x = process_fast5_read(read, window)
+            yield (x)
 
 class xy_generator_many_wrapper():
 
@@ -175,6 +182,111 @@ class xy_generator_many():
     def __setstate__(self, state):
         self.__dict__.update(state)
 
+
+class batch_readid_x_generator_many_wrapper():
+
+    def __init__(self, files, window, par=1, buff=100):
+        self.gen = readid_x_generator_many(
+                files, window, par=par, buff=buff)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        i = 0
+        bs = 32
+        batch = np.empty([1, 4000, 1])
+        # add window and bs to params
+        while next(self.gen) != None:
+            i +=1 
+            batch = np.append(batch, 
+                next(self.gen).reshape(1, 4001, 1), axis=0)
+            if i == bs:
+                i ==0
+                # how to deal with < 32 samples at end
+                # foo 0 0 0 ... 0
+                return batch
+                # how to clear batch after returning
+                
+
+    def __del__(self):
+        self.gen.pool.terminate()
+
+class readid_x_generator_many_wrapper():
+
+    def __init__(self, files, window, par=1, buff=100):
+        self.gen = readid_x_generator_many(
+                files, window, par=par, buff=buff)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self.gen)
+
+    def __del__(self):
+        self.gen.pool.terminate()
+
+
+class readid_x_generator_many():
+    """ Generator that yields training examples from multiple fast5 files
+
+    Processing of fast5 files can be parallelized to achieve higher throughput.
+    """
+
+    def __init__(self, files, window, par=1, buff=100):
+        self.files = files
+        self.window = window
+        self.par = par
+        self.count = 0  # counts number of reads processed
+        self.buff = buff
+
+        # Create queue for workers to put results
+        m = mp.Manager()
+        self.results = m.Queue(self.buff)
+
+        # Create a pool of workers and submit jobs
+        self.pool = mp.Pool(self.par)
+        self.async_res = self.pool.map_async(self.worker, self.files,
+                                             chunksize=int(len(files)/(2*par)))
+
+        # Close the pool, as no more jobs will be submitted
+        self.pool.close()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        # Logic to terminate iteration when jobs are finished and all results
+        # have been consumed. The empty() and ready() methods used below have
+        # infinitesimally small delays until they return True. Therefore, we
+        # need to check them again after a small delay. Perhaps not the best
+        # solution.
+        if self.results.empty():
+            time.sleep(1)
+            if self.results.empty() and self.async_res.ready():
+                raise StopIteration
+
+        self.count += 1
+        return self.results.get()
+
+    def worker(self, fast5):
+        """ Processes a fast5 file and adds training examples in a queue"""
+
+        with get_fast5_file(fast5, mode='r') as f5:
+            for read in f5.get_reads():
+                readid = read.get_read_id()
+                x = process_fast5_read(read, self.window)
+                self.results.put((readid, x), block=True)
+
+    def __getstate__(self):
+        self_dict = self.__dict__.copy()
+        del self_dict['pool']
+        del self_dict['async_res']
+        return self_dict
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
 
 def skew_generators(files1, files2, label1, label2, window, skew=0.5, par=2):
     """ Interleaves 2 generators. skew defines proportion of the first
