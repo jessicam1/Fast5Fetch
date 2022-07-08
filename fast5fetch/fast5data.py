@@ -139,9 +139,12 @@ class xy_generator_many():
         self.results = m.Queue(self.buff)
 
         # Create a pool of workers and submit jobs
+        chunksize = int(len(files)/(2*par))
+        if chunksize == 0:
+            chunksize = 1
         self.pool = mp.Pool(self.par)
         self.async_res = self.pool.map_async(self.worker, self.files,
-                                             chunksize=int(len(files)/(2*par)))
+                                             chunksize=chunksize)
 
         # Close the pool, as no more jobs will be submitted
         self.pool.close()
